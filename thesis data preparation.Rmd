@@ -1,0 +1,197 @@
+---
+title: "THESIS DATA PREPARATION"
+author: "Kandu Jiwandono"
+date: "12/6/2019"
+output:
+  html_document: default
+---
+
+# Introduction
+Hello, this is my thesis for my master graduate programme in ITB. this thesis using air pollution data which you can get from Dinas Lingkungan Hidup. The analysis mainly focused on time series using ARIMA method on Ozone and Its Precursors.
+
+# Data Preparation
+## Import data
+Importing data to R can be done with
+```{r}
+dki1 <- read.csv("C:/Users/Jiwandono/Dropbox/thesis kandu/Data buat R/DKI 1/DKI1-Rdata (2010-2017).csv", stringsAsFactors = FALSE)
+
+str(dki1)
+
+```
+
+## Data Cleaning
+Data Cleaning is the process of preparing data for analysis by removing or modifying data that is incorrect, incomplete, irrelevant, duplicated, or improperly formatted. This process takes most of the data analyst time. We use dplyr, and tidyverse package to help us clean the datasets
+```{r, message=FALSE, warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(knitr)
+```
+
+
+### Selecting Variables
+Since there are some duplicated variables like "Date...Time" and "Date", "Month", etc; also we wont use all of the parameters to analysis, we start by selecting parameters. the parameters that we will use in this analysis are Date and time, O~3~, NO~2~, NO, NO~X~, THC, NMHC, and CH~4~.
+We can select the parameter by 
+```{r}
+dki1_selected <- dki1 %>% select(Date...Time, O3, NO, NO2, NOx, CH4, THC, NMHC)
+
+```
+And now lets take a look at the data after we perform selection
+```{r}
+head(dki1_selected)
+```
+
+### Tidying the Data
+Lets take a look at the data again
+```{r}
+str(dki1_selected)
+```
+As you can see, the coloumn "Date...Time has variable type character where it should be in Date format.
+Lets convert it into Date format
+```{r}
+
+dki1_selected$Date...Time <- strptime(dki1_selected$Date...Time, "%Y-%m-%d %H:%M")
+```
+
+now take a look again at it
+```{r}
+str(dki1_selected)
+```
+Great we succesfully transformed it into POSIXlt data type
+
+### Missing data
+Lets Check how many data missing for each parameters:
+```{r echo=FALSE, results = "asis"}
+miss.dat.df <- data.frame(Parameter = c("Ozone", "NO2", "NO", "NOx", "CH4", "NMHC", "THC"), Total.Missing.Data = NA)
+i = 2
+j = 1
+for (i in 2:8){
+  miss.dat.df[j,2] <- sum(is.na(dki1_selected[,i]))
+  j <- j+1
+  i <- i+1
+}
+
+kable(miss.dat.df, caption = "Missing Data for Each Parameters")
+```
+
+Before we proceed to further analysis, those missing data needs to be imputed. The imputation method will be interpolation because each parameters has a "typical pattern" concentration value per day.  
+Look at the plot before data was interpolated
+
+```{r, echo= FALSE, fig.align='center'}
+plot(dki1_selected[49:336,1], dki1_selected[49:336,2], col = "red", type = "l", main = "First 7 days Ozone Concentration Before Imputing Missing Data", xlab = "DAY", ylab = "Concentration")
+```
+
+We interpolated the data using ***na.interp*** function which included in ***Forecast*** package. the code are
+```{r, warning= FALSE, message= FALSE}
+library(forecast)
+dki1_interp <- dki1_selected
+i = 2
+for (i in 2:8) {
+  dki1_interp[,i] <- na.interp(dki1_interp[,i])
+  i=i+1
+}
+```
+
+And now look at the interpolated data plot
+```{r, fig.align='center', echo=FALSE}
+plot(dki1_interp[49:336,1], dki1_interp[49:336,2], col = "deepskyblue3", type = "l", main = "First 7 days Ozone Concentration After Imputing Missing Data", xlab = "DAY", ylab = "Concentration")
+```
+
+The imputed data looks good on the original data.
+
+### Data conversion
+
+Early data conversion was carried out according to further analysis requirements.
+The basis of data conversion is by its exposure time, quality standards, parameter's reaction time, and data availability. 
+```{r echo=FALSE, results = "asis"}
+tabel_konversi <- data.frame(Parameter = c("Ozone", "NO2", "NO", "NOx", "Hydrocarbon (CH4, NMHC, THC)"), Conversion =c("Daily 8 Hours Average From 08.00 to 16.00", "Daily 24 Hours Average",  "Daily 24 Hours Average",  "Daily 24 Hours Average", "Daily Maximum 3 Hour Average" ))
+
+kable(tabel_konversi, caption = "Conversion Table Per Parameter")
+
+```
+
+We assumed that minimum requirement of data is 80% from total data. Therefore, it needs 14 data for ozone each day, 20 data for all of Nitrogen based pollutan each day, and 3 data for all of hydrocarbon
+For Ozone the conversion can be done with this code 
+```{r message=FALSE, warning=FALSE}
+dki1_perday <- data.frame(Date = seq(as.Date("2010-01-01"), as.Date("2018-01-01"), by = "day"), O3= NA, NO= NA, NO2= NA, NOx = NA, CH4 = NA, THC = NA, NMHC = NA)
+
+a = 2
+for (a in 2:8) {
+
+  N= nrow(dki1_interp) #counting number of row
+  n=48 #total data per day, 30 minutes average data
+  nhari=N/n #count total day
+  if (a <3){
+    n80=as.integer(ceiling(0.8*17)) #17 is total data from 08.00 to 16.00
+    i=0 #start from 0
+    j=16 #08.00 data
+    k=32 #16.00 data
+    for(i in 1:nhari){
+      if(sum(!is.na(dki1_interp[j:k,a]))>=n80){ 
+        dki1_perday[i,a]<-mean(dki1_interp[j:k,a], na.rm = TRUE)
+      }
+    else {dki1_perday[i,a]=NA}
+  
+   j<-j+n
+   k<-k+n
+    }
+    a <- a+1
+  }
+  else {
+    if (a<6 & a>2){
+      dki1_dates <- dki1_interp
+      dki1_dates[,1] <- as.Date(dki1_dates[,1], format = "%Y-%m-%d %H:%M") 
+      temp_nitro <- aggregate(dki1_dates[,a]~dki1_dates[,1], FUN = mean)
+      dki1_perday[,a] <- temp_nitro[,2]
+      a <- a+1
+    } else {
+      mov3 = 6 #moving average 3 hours with 30 minutes data, 2 data per hours
+      n80 = as.integer((ceiling(0.8*mov3)))
+      i = 1
+      j = 1
+      k=mov3
+      p=1
+      max_mov_avg = 0
+      countNA = 0
+      temp_mov_avg = 0
+      for (i in 1:nhari){
+        while(p < n-(mov3-1)) {
+          if(sum(!is.na(dki1_interp[j:k,a]))>=n80){
+            temp_mov_avg <- mean(dki1_interp[j:k,a], na.rm = TRUE)
+          } else {
+            temp_mov_avg <- 0
+            countNA <- countNA+1
+          }
+          if (temp_mov_avg>max_mov_avg) {
+            max_mov_avg <- temp_mov_avg
+          }
+          j <- j+1
+          k <- k+1
+          p <- p+1
+        }
+        if(countNA == n-(mov3-1)) {
+          dki1_perday[i,a] <- NA
+        } else {
+          dki1_perday[i,a] <- max_mov_avg
+        }
+        j <- j+(mov3)
+        k <- k+(mov3)
+        p <- 1
+        max_mov_avg <- 0
+      }
+      a <- a+1
+    }
+  }
+}
+
+```
+
+
+lets take a look at the new datasets which contains the converted data.
+```{r}
+head(dki1_perday)
+str(dki1_perday)
+```
+
+Now we already converted the datasets into daily average.
+now the data is ready for further analysis.
+
